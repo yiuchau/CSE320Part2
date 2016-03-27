@@ -9,8 +9,7 @@
 #define MAX_INPUT 1024
 
 
-int builtIn(char* argv);
-int parseArgs(char* cmd, char*** argvPtr);
+int builtIn(char** argv);
 int parseString(char* s, char*** buf, char* delim);
 
 void Exec(char **myargv, char **envp);
@@ -34,6 +33,15 @@ int main (int argc, char ** argv, char **envp) {
     int count;
     char **myargv = NULL;
     int myargc;
+
+    char buf[1024];
+    if(getcwd(buf, sizeof(buf)) != NULL){
+      write(1, "[", 1);
+      write(1, buf, strlen(buf));
+      write(1,"]", 1);
+    }
+    else
+      printf("getcwd error.\n");
 
 
     // Print the prompt
@@ -77,7 +85,7 @@ int main (int argc, char ** argv, char **envp) {
     }
 
     // check if built-in cmd or program
-    if(!builtIn(myargv[0])) {
+    if(!builtIn(myargv)) {
       printf("%s command is not a built-in command.\n", myargv[0]);
     // Programs:
     // 1. If cmd includes a / character, it is a path, check using stat if file exists, exec file
@@ -92,9 +100,9 @@ int main (int argc, char ** argv, char **envp) {
       } else {
         //cmd is not a path, build path using path list
         int found = 0;
-        
+
         for(int i = 0; i < pathCount; i++) {
-          //check if path is file, if yes, execute
+          //check if PATH + program is file, if yes, execute
           struct stat buf;
           char filePath[256];
           strcpy(filePath, myPath[i]);
@@ -113,6 +121,62 @@ int main (int argc, char ** argv, char **envp) {
 
         if(!found)
           printf("%s command not found.\n", myargv[0]);
+      }
+    }else{
+      if(strcmp(myargv[0], "cd") == 0) {
+        char *OLDPWD = getenv("OLDPWD");
+        char *PWD = getenv("PWD");
+
+        if(!myargv[1]){
+          printf("myargv[1] is null: %s\n", myargv[1]);
+          char *home = getenv("HOME");
+          printf("HOME: %s\n", home);
+          if(chdir(home) == 0){
+            printf("chdir %s success.\n", home);
+            setenv("PWD", home, 1);
+            setenv("OLDPWD", PWD, 1);
+          }
+          else
+            printf("chdir %s error.\n", myargv[1]);
+        }
+        else if(strcmp(myargv[1], "-") == 0){
+          printf("1. OLDPWD: %s, PWD: %s\n", OLDPWD, PWD);
+          if(chdir(OLDPWD) == 0){
+            printf("chdir %s success.\n",myargv[1]);
+            setenv("PWD", OLDPWD, 1);
+            setenv("OLDPWD", PWD, 1);
+            OLDPWD = getenv("OLDPWD");
+            PWD = getenv("PWD"); 
+            printf("2. OLDPWD: %s, PWD: %s\n", OLDPWD, PWD);
+          }
+          else
+            printf("chdir %s error.\n", myargv[1]);
+        }else{
+          if(chdir(myargv[1]) == 0){
+            char buf[1024];
+            printf("chdir %s success.\n",myargv[1]);
+            if(getcwd(buf, sizeof(buf)) != NULL)
+              printf("%s: Current Working Directory is %s\n", myargv[0], buf);
+            else
+              printf("getcwd error.\n");
+            setenv("PWD", buf, 1);
+            setenv("OLDPWD", PWD, 1);
+          }
+          else
+            printf("chdir %s error.\n", myargv[1]);
+        }
+      }else
+      if(strcmp(myargv[0], "echo") == 0) {
+
+      }else
+      if(strcmp(myargv[0], "set") == 0) {
+        printf("setting environment variable..\n");
+        char* var = myargv[1];
+        char* value = myargv[3];
+        if(setenv(var, value, 1) == 0)
+          printf("setenv success: %s = %s\n", var, value);
+        else
+          printf("setenv failure: %s = %s\n", var, value);
       }
     }
 
@@ -142,25 +206,6 @@ void Exec(char **myargv, char **envp) {
   return;
 }
 
-int parseArgs(char* cmd, char*** argvPtr) {
-  char *token;
-  char **argv = calloc(1, sizeof(char*));
-  int argc = 1;
-
-  token = strtok(cmd, " \n");
-
-  while (token != NULL) {
-    argv[argc - 1] = token;
-    argc++;
-    argv = realloc(argv, argc * sizeof(char*));
-    token = strtok(NULL, " \n");
-  }
-
-  argv[argc - 1] = NULL;
-  *argvPtr = argv;
-  return argc - 1; // last arg is a null pointer
-}
-
 int parseString(char* s, char*** buf, char* delim) {
   char *token;
   char **buf2 = calloc(1, sizeof(char*));
@@ -180,6 +225,36 @@ int parseString(char* s, char*** buf, char* delim) {
   return count - 1; // last arg is a null pointer
 }
 
-int builtIn(char* argv) {
-  return 0;
+int builtIn(char** argv) {
+  int isBuiltIn = 0;
+  if(strcmp(argv[0], "exit") == 0) {
+    exit(0);
+    }
+
+  if(strcmp(argv[0], "pwd") == 0) {
+    isBuiltIn = 1;
+    char buf[1024];
+    if(getcwd(buf, sizeof(buf)) != NULL)
+      printf("%s: Current Working Directory is %s\n", argv[0], buf);
+    else
+      printf("getcwd error.\n");
+    }
+
+  if(strcmp(argv[0], "cd") == 0) {
+    isBuiltIn = 1;
+  }
+
+  if(strcmp(argv[0], "echo") == 0) {
+    isBuiltIn = 1;
+  }
+
+  if(strcmp(argv[0], "set") == 0) {
+    isBuiltIn = 1;
+  }
+
+  if(strcmp(argv[0], "help") == 0) {
+    isBuiltIn = 1;
+  }
+
+  return isBuiltIn;
 }
