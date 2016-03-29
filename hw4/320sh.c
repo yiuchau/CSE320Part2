@@ -178,7 +178,25 @@ int main (int argc, char ** argv, char **envp) {
           }
         }else
         if(strcmp(myargv[0], "echo") == 0) {
-          printf("%s", myargv[1]);
+          if(strcmp(myargv[2], ">") == 0) {
+            int outputfd, stdout_copy = dup(1);
+            printf("Found >, redirecting output.\n");
+            if(myargv[3] == NULL) {
+              printf("No file to redirect output to.\n");
+            }
+            else{
+              if((outputfd = (open(myargv[3], O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IROTH))) < 0) {
+                printf("Open error.\n");
+              }
+              else {
+                dup2(outputfd, 1);
+                close(outputfd);
+                printf("%s", myargv[1]);
+                dup2(stdout_copy, 1);
+                close(stdout_copy);
+              }
+            }
+          }
         }else
         if(strcmp(myargv[0], "set") == 0) {
           printf("setting environment variable..\n");
@@ -203,29 +221,39 @@ int main (int argc, char ** argv, char **envp) {
 void Exec(char **myargv, char **envp) {
   pid_t pid;
   int child_status;
+  char *index;
   if((pid = fork()) == 0) {
     for(int i = 0; myargv[i] != NULL; i++) {
-      if(strchr(myargv[i], '>') != NULL) {
-        int outputfd;
-        printf("Found >, redirecting output.\n");
-        if((outputfd = (open(myargv[i + 1], O_WRONLY | O_CREAT, 0644))) < 0) {
-          printf("Open error.\n");
-          return;
-        }
-        dup2(outputfd, 1);
-        close(outputfd);
-        myargv[i] = NULL;
-      }
-      if(strchr(myargv[i], '<') != NULL) {
+      if((index = (strchr(myargv[i], '<'))) != NULL) {
         int inputfd;        
-        printf("Found <, redirecting output.\n");
+        printf("argv[%d]: Found <, redirecting input.\n", i);
         if((inputfd = (open(myargv[i + 1], O_RDONLY))) < 0) {
           printf("Open error.\n");
           return;
         }
-        dup2(inputfd, 0);
+        dup2(inputfd, STDIN_FILENO);
         close(inputfd);
         myargv[i] = NULL;
+        myargv[i + 1] = NULL;
+        i++; //Increment i such that loop continues afterwards for further redirections.
+      }else
+      if((index = (strchr(myargv[i], '>'))) != NULL) {
+        int outputfd;
+        printf("argv[%d]: Found >, redirecting output.\n", i);
+        if(myargv[i + 1] == NULL) {
+          printf("No file to redirect output to.\n");
+          return;
+        }
+        if((outputfd = (open(myargv[i + 1], O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IROTH))) < 0) {
+          printf("Open error.\n");
+          return;
+        }
+        dup2(outputfd, STDOUT_FILENO);
+        close(outputfd);
+        myargv[i] = NULL;
+        myargv[i + 1] = NULL;
+        printf("Test: %s, %s\n", myargv[i], myargv[i + 1]);
+        i++; //Increment i such that loop continues afterwards for further redirections.
       }
     }
 
