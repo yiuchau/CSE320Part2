@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <wait.h>
 #include <sys/stat.h>
+#include <fcntl.h>
 
 // Assume no input line will be longer than 1024 bytes
 #define MAX_INPUT 1024
@@ -24,6 +25,8 @@ int main (int argc, char ** argv, char **envp) {
   char** myPath;
   int pathCount;
   pathCount = parseString(path, &myPath, ":");
+
+  setvbuf(stdout, NULL, _IONBF, 0);
 
 
   while (!finished) {
@@ -59,13 +62,19 @@ int main (int argc, char ** argv, char **envp) {
       last_char = *cursor;
       // input is ^C
       if(last_char == 3) {
-        write(1, "^c", 2);
+        write(1, "^c\n", 3);
+        finished = 1;
+        break;
       } else {
 	      write(1, &last_char, 1);
       }
     } 
     
     *cursor = '\0';
+
+    if(*cmd == '\n') {
+      printf("Empty input\n");
+    }
 
     if (!rv) { 
       finished = 1;
@@ -79,110 +88,113 @@ int main (int argc, char ** argv, char **envp) {
 
     // parse envp variables
     // parse cmd on spaces
-    myargc = parseString(cmd, &myargv, " \n");
-    for(int i = 0; i < myargc; i++) {
-      printf("myargv[%d] = %s\n", i, myargv[i]);
-    }
 
-    // check if built-in cmd or program
-    if(!builtIn(myargv)) {
-      printf("%s command is not a built-in command.\n", myargv[0]);
-    // Programs:
-    // 1. If cmd includes a / character, it is a path, check using stat if file exists, exec file
-    // 2. else try all values in path list using stat, then exec
-      if(strchr(myargv[0], '/') != NULL) {
-        printf("%s command is a relative or absolute path.\n", myargv[0]);
-        struct stat buf;
-        if(stat(myargv[0],&buf) == 0) {
-          // file exists
-          Exec(myargv, envp);
-        }
-      } else {
-        //cmd is not a path, build path using path list
-        int found = 0;
+    if(*cmd != '\n') {
+      myargc = parseString(cmd, &myargv, " \n");
+      for(int i = 0; i < myargc; i++) {
+        printf("myargv[%d] = %s\n", i, myargv[i]);
+      }
 
-        for(int i = 0; i < pathCount; i++) {
-          //check if PATH + program is file, if yes, execute
+      // check if built-in cmd or program
+      if(!builtIn(myargv)) {
+        printf("%s command is not a built-in command.\n", myargv[0]);
+      // Programs:
+      // 1. If cmd includes a / character, it is a path, check using stat if file exists, exec file
+      // 2. else try all values in path list using stat, then exec
+        if(strchr(myargv[0], '/') != NULL) {
+          printf("%s command is a relative or absolute path.\n", myargv[0]);
           struct stat buf;
-          char filePath[256];
-          strcpy(filePath, myPath[i]);
-          strcat(filePath, "/");
-          strcat(filePath, myargv[0]);
-          printf("Filepath: %s\n", filePath);
-          if(stat(filePath,&buf) == 0) {
+          if(stat(myargv[0],&buf) == 0) {
             // file exists
-            printf("File exists, executing..\n");
-            //update argv
-            myargv[0] = filePath;
             Exec(myargv, envp);
-            found = 1;
           }
-        }
+        } else {
+          //cmd is not a path, build path using path list
+          int found = 0;
 
-        if(!found)
-          printf("%s command not found.\n", myargv[0]);
-      }
-    }else{
-      if(strcmp(myargv[0], "cd") == 0) {
-        char *OLDPWD = getenv("OLDPWD");
-        char *PWD = getenv("PWD");
+          for(int i = 0; i < pathCount; i++) {
+            //check if PATH + program is file, if yes, execute
+            struct stat buf;
+            char filePath[256];
+            strcpy(filePath, myPath[i]);
+            strcat(filePath, "/");
+            strcat(filePath, myargv[0]);
+            printf("Filepath: %s\n", filePath);
+            if(stat(filePath,&buf) == 0) {
+              // file exists
+              printf("File exists, executing..\n");
+              //update argv
+              myargv[0] = filePath;
+              Exec(myargv, envp);
+              found = 1;
+            }
+          }
 
-        if(!myargv[1]){
-          printf("myargv[1] is null: %s\n", myargv[1]);
-          char *home = getenv("HOME");
-          printf("HOME: %s\n", home);
-          if(chdir(home) == 0){
-            printf("chdir %s success.\n", home);
-            setenv("PWD", home, 1);
-            setenv("OLDPWD", PWD, 1);
-          }
-          else
-            printf("chdir %s error.\n", myargv[1]);
+          if(!found)
+            printf("%s command not found.\n", myargv[0]);
         }
-        else if(strcmp(myargv[1], "-") == 0){
-          printf("1. OLDPWD: %s, PWD: %s\n", OLDPWD, PWD);
-          if(chdir(OLDPWD) == 0){
-            printf("chdir %s success.\n",myargv[1]);
-            setenv("PWD", OLDPWD, 1);
-            setenv("OLDPWD", PWD, 1);
-            OLDPWD = getenv("OLDPWD");
-            PWD = getenv("PWD"); 
-            printf("2. OLDPWD: %s, PWD: %s\n", OLDPWD, PWD);
-          }
-          else
-            printf("chdir %s error.\n", myargv[1]);
-        }else{
-          if(chdir(myargv[1]) == 0){
-            char buf[1024];
-            printf("chdir %s success.\n",myargv[1]);
-            if(getcwd(buf, sizeof(buf)) != NULL)
-              printf("%s: Current Working Directory is %s\n", myargv[0], buf);
+      }else{
+        if(strcmp(myargv[0], "cd") == 0) {
+          char *OLDPWD = getenv("OLDPWD");
+          char *PWD = getenv("PWD");
+
+          if(!myargv[1]){
+            printf("myargv[1] is null: %s\n", myargv[1]);
+            char *home = getenv("HOME");
+            printf("HOME: %s\n", home);
+            if(chdir(home) == 0){
+              printf("chdir %s success.\n", home);
+              setenv("PWD", home, 1);
+              setenv("OLDPWD", PWD, 1);
+            }
             else
-              printf("getcwd error.\n");
-            setenv("PWD", buf, 1);
-            setenv("OLDPWD", PWD, 1);
+              printf("chdir %s error.\n", myargv[1]);
           }
+          else if(strcmp(myargv[1], "-") == 0){
+            printf("1. OLDPWD: %s, PWD: %s\n", OLDPWD, PWD);
+            if(chdir(OLDPWD) == 0){
+              printf("chdir %s success.\n",myargv[1]);
+              setenv("PWD", OLDPWD, 1);
+              setenv("OLDPWD", PWD, 1);
+              OLDPWD = getenv("OLDPWD");
+              PWD = getenv("PWD"); 
+              printf("2. OLDPWD: %s, PWD: %s\n", OLDPWD, PWD);
+            }
+            else
+              printf("chdir %s error.\n", myargv[1]);
+          }else{
+            if(chdir(myargv[1]) == 0){
+              char buf[1024];
+              printf("chdir %s success.\n",myargv[1]);
+              if(getcwd(buf, sizeof(buf)) != NULL)
+                printf("%s: Current Working Directory is %s\n", myargv[0], buf);
+              else
+                printf("getcwd error.\n");
+              setenv("PWD", buf, 1);
+              setenv("OLDPWD", PWD, 1);
+            }
+            else
+              printf("chdir %s error.\n", myargv[1]);
+          }
+        }else
+        if(strcmp(myargv[0], "echo") == 0) {
+          printf("%s", myargv[1]);
+        }else
+        if(strcmp(myargv[0], "set") == 0) {
+          printf("setting environment variable..\n");
+          char* var = myargv[1];
+          char* value = myargv[3];
+          if(setenv(var, value, 1) == 0)
+            printf("setenv success: %s = %s\n", var, value);
           else
-            printf("chdir %s error.\n", myargv[1]);
+            printf("setenv failure: %s = %s\n", var, value);
         }
-      }else
-      if(strcmp(myargv[0], "echo") == 0) {
-
-      }else
-      if(strcmp(myargv[0], "set") == 0) {
-        printf("setting environment variable..\n");
-        char* var = myargv[1];
-        char* value = myargv[3];
-        if(setenv(var, value, 1) == 0)
-          printf("setenv success: %s = %s\n", var, value);
-        else
-          printf("setenv failure: %s = %s\n", var, value);
       }
+
+      //free myargv
+      printf("Freeing myargv..\n");
+      free(myargv);
     }
-
-    //free myargv
-    free(myargv);
-
   }
 
   return 0;
@@ -192,9 +204,33 @@ void Exec(char **myargv, char **envp) {
   pid_t pid;
   int child_status;
   if((pid = fork()) == 0) {
+    for(int i = 0; myargv[i] != NULL; i++) {
+      if(strchr(myargv[i], '>') != NULL) {
+        int outputfd;
+        printf("Found >, redirecting output.\n");
+        if((outputfd = (open(myargv[i + 1], O_WRONLY | O_CREAT, 0644))) < 0) {
+          printf("Open error.\n");
+          return;
+        }
+        dup2(outputfd, 1);
+        close(outputfd);
+        myargv[i] = NULL;
+      }
+      if(strchr(myargv[i], '<') != NULL) {
+        int inputfd;        
+        printf("Found <, redirecting output.\n");
+        if((inputfd = (open(myargv[i + 1], O_RDONLY))) < 0) {
+          printf("Open error.\n");
+          return;
+        }
+        dup2(inputfd, 0);
+        close(inputfd);
+        myargv[i] = NULL;
+      }
+    }
+
     if((execve(myargv[0], myargv, envp)) < 0){
       printf("%s command not found.\n", myargv[0]);
-      exit(1);
     }
   } 
 
@@ -202,7 +238,7 @@ void Exec(char **myargv, char **envp) {
   if(WIFEXITED(child_status))
     printf("Child %d terminated with exit status %d.\n", pid, WEXITSTATUS(child_status));
   else
-    printf("Child %dterminated abnormally.\n", pid);
+    printf("Child %d terminated abnormally.\n", pid);
   return;
 }
 
@@ -222,12 +258,13 @@ int parseString(char* s, char*** buf, char* delim) {
 
   buf2[count - 1] = NULL;
   *buf = buf2;
-  return count - 1; // last arg is a null pointer
+  return count - 1; // last arg is a null pointer, otherwise segfault path count
 }
 
 int builtIn(char** argv) {
   int isBuiltIn = 0;
   if(strcmp(argv[0], "exit") == 0) {
+    free(argv);
     exit(0);
     }
 
@@ -256,5 +293,6 @@ int builtIn(char** argv) {
     isBuiltIn = 1;
   }
 
+  printf("Built-in: %d\n", isBuiltIn);
   return isBuiltIn;
 }
