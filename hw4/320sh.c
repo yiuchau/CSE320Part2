@@ -13,19 +13,21 @@
 int builtIn(char** argv);
 int parseString(char* s, char*** buf, char* delim);
 
-void Exec(char **myargv, char **envp);
+
+
+void ExecWrapper(char **myargv, char **envp, char** myPath);
+void ExecPath(int inputfd, int outputfd, char**myargv, char** envp, char** myPath);
+void Exec(int inputfd, int outputfd, char **myargv, char **envp);
 
 int main (int argc, char ** argv, char **envp) {
 
   int finished = 0;
   char *prompt = "320sh> ";
   char cmd[MAX_INPUT];
-
   char *path = getenv("PATH");
   char** myPath;
   int pathCount;
   pathCount = parseString(path, &myPath, ":");
-
   setvbuf(stdout, NULL, _IONBF, 0);
 
 
@@ -96,43 +98,9 @@ int main (int argc, char ** argv, char **envp) {
       }
 
       // check if built-in cmd or program
-      if(!builtIn(myargv)) {
-        printf("%s command is not a built-in command.\n", myargv[0]);
-      // Programs:
-      // 1. If cmd includes a / character, it is a path, check using stat if file exists, exec file
-      // 2. else try all values in path list using stat, then exec
-        if(strchr(myargv[0], '/') != NULL) {
-          printf("%s command is a relative or absolute path.\n", myargv[0]);
-          struct stat buf;
-          if(stat(myargv[0],&buf) == 0) {
-            // file exists
-            Exec(myargv, envp);
-          }
-        } else {
-          //cmd is not a path, build path using path list
-          int found = 0;
-
-          for(int i = 0; i < pathCount; i++) {
-            //check if PATH + program is file, if yes, execute
-            struct stat buf;
-            char filePath[256];
-            strcpy(filePath, myPath[i]);
-            strcat(filePath, "/");
-            strcat(filePath, myargv[0]);
-            printf("Filepath: %s\n", filePath);
-            if(stat(filePath,&buf) == 0) {
-              // file exists
-              printf("File exists, executing..\n");
-              //update argv
-              myargv[0] = filePath;
-              Exec(myargv, envp);
-              found = 1;
-            }
-          }
-
-          if(!found)
-            printf("%s command not found.\n", myargv[0]);
-        }
+      if(!builtIn(myargv) || ((strcmp(myargv[0], "echo")) == 0)) {
+        printf("PathCount = %d\n", pathCount);
+        ExecWrapper(myargv, envp, myPath);
       }else{
         if(strcmp(myargv[0], "cd") == 0) {
           char *OLDPWD = getenv("OLDPWD");
@@ -177,27 +145,6 @@ int main (int argc, char ** argv, char **envp) {
               printf("chdir %s error.\n", myargv[1]);
           }
         }else
-        if(strcmp(myargv[0], "echo") == 0) {
-          if(strcmp(myargv[2], ">") == 0) {
-            int outputfd, stdout_copy = dup(1);
-            printf("Found >, redirecting output.\n");
-            if(myargv[3] == NULL) {
-              printf("No file to redirect output to.\n");
-            }
-            else{
-              if((outputfd = (open(myargv[3], O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IROTH))) < 0) {
-                printf("Open error.\n");
-              }
-              else {
-                dup2(outputfd, 1);
-                close(outputfd);
-                printf("%s", myargv[1]);
-                dup2(stdout_copy, 1);
-                close(stdout_copy);
-              }
-            }
-          }
-        }else
         if(strcmp(myargv[0], "set") == 0) {
           printf("setting environment variable..\n");
           char* var = myargv[1];
@@ -214,19 +161,117 @@ int main (int argc, char ** argv, char **envp) {
       free(myargv);
     }
   }
-
+  //free myPath
+  printf("Freeing myPath..\n");
+  free(myPath);
   return 0;
 }
 
-void Exec(char **myargv, char **envp) {
+
+void ExecWrapper(char **myargv, char **envp, char** myPath) {
+  int inputfd, pipefd[2];
+
+  inputfd = 0;
+  int i, nextCmd = 0;
+  int cmd = 0;
+
+  do {
+    cmd = nextCmd;
+
+    //printf("cmd: %d, nextCmd: %d\n", cmd, nextCmd);
+    nextCmd = -1;
+    for(i = cmd; (myargv[i] != NULL) && (nextCmd != i); i++) {
+      if(strcmp(myargv[i], "|") == 0) {
+        myargv[i] = NULL;
+        nextCmd = i + 1;
+        printf("Pipe found at index %d - P1:%s P2:%s\n", i, myargv[cmd], myargv[nextCmd]);
+      }
+    }
+
+    if(nextCmd == -1)
+      break;
+
+    pipe(pipefd);
+    printf("Attempted execution with pipes: %s\n", myargv[cmd]);
+    ExecPath(inputfd, pipefd[1], &myargv[cmd], envp, myPath);
+    close(pipefd[1]);
+    inputfd = pipefd[0];
+
+    //printf("cmd: %d, nextCmd: %d\n", cmd, nextCmd);
+  }while(1);
+
+  printf("Final process: %s\n", myargv[cmd]);
+  ExecPath(inputfd, 1, &myargv[cmd], envp, myPath);
+  return;
+}
+
+void ExecPath(int inputfd, int outputfd, char**myargv, char** envp, char** myPath) {
+
+
+  printf("%s command is not a built-in command or is echo.\n", myargv[0]);
+  if(strcmp(myargv[0], "echo") == 0) {
+    Exec(inputfd, outputfd, myargv, envp);
+  }
+  // Programs:
+  // 1. If cmd includes a / character, it is a path, check using stat if file exists, exec file
+  // 2. else try all values in path list using stat, then exec
+  if(strchr(myargv[0], '/') != NULL) {
+    printf("%s command is a relative or absolute path.\n", myargv[0]);
+    struct stat buf;
+    if(stat(myargv[0],&buf) == 0) {
+      // file exists
+      Exec(inputfd, outputfd, myargv, envp);
+    }
+  } else {
+      //cmd is not a path, build path using path list
+    int found = 0;
+    int i = 0;
+    while(myPath[i] != NULL && found != 1) {
+      //check if PATH + program is file, if yes, execute
+      struct stat buf;
+      char filePath[256];
+      strcpy(filePath, myPath[i]);
+      strcat(filePath, "/");
+      strcat(filePath, myargv[0]);
+      printf("Filepath: %s\n", filePath);
+      if(stat(filePath,&buf) == 0) {
+          // file exists
+        printf("File exists, executing..\n");
+          //update argv
+        myargv[0] = filePath;
+        Exec(inputfd, outputfd, myargv, envp);
+        found = 1;
+      }
+      i++;
+    }
+
+    if(!found)
+        printf("%s command not found.\n", myargv[0]);
+    }
+
+    return;
+}
+
+
+
+void Exec(int inputfd, int outputfd, char **myargv, char **envp) {
   pid_t pid;
   int child_status;
   char *index;
   if((pid = fork()) == 0) {
+
+    if(inputfd != 0) {
+      dup2(inputfd, 0);
+      close(inputfd);
+    }
+    if(outputfd != 1) {
+      dup2(outputfd, 1);
+      close(outputfd);
+    }
     for(int i = 0; myargv[i] != NULL; i++) {
       if((index = (strchr(myargv[i], '<'))) != NULL) {
         int inputfd;        
-        printf("argv[%d]: Found <, redirecting input.\n", i);
+        printf("[%s]argv[%d]: Found <, redirecting input.\n", myargv[0], i);
         if((inputfd = (open(myargv[i + 1], O_RDONLY))) < 0) {
           printf("Open error.\n");
           return;
@@ -256,6 +301,14 @@ void Exec(char **myargv, char **envp) {
         i++; //Increment i such that loop continues afterwards for further redirections.
       }
     }
+
+    printf("[%s]: Redirected Inputfd: %d, Outputfd: %d\n", myargv[0], STDIN_FILENO, STDOUT_FILENO);
+
+    if((strcmp(myargv[0], "echo")) == 0) {
+      //handle echo after redirection/pipe
+      printf("[%s]%s", myargv[0], myargv[1]);
+      exit(0);
+  }
 
     if((execve(myargv[0], myargv, envp)) < 0){
       printf("%s command not found.\n", myargv[0]);
