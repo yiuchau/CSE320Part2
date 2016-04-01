@@ -26,7 +26,8 @@ int main (int argc, char ** argv, char **envp) {
   char cmd[MAX_INPUT];
   char *path = getenv("PATH");
   char** myPath;
-  int pathCount = parseString(path, &myPath, ":");
+  
+  parseString(path, &myPath, ":");
 
   setvbuf(stdout, NULL, _IONBF, 0);
 
@@ -93,67 +94,103 @@ int main (int argc, char ** argv, char **envp) {
     // parse cmd on spaces
 
     if(1) {
+      printf("Parsing arguments..\n");
       myargc = parseString(cmd, &myargv, " \n");
+
       for(int i = 0; i < myargc; i++) {
-        printf("myargv[%d] = %s\n", i, myargv[i]);
+        printf("[%s]: myargv[%d] = %s\n", myargv[0], i, myargv[i]);
       }
 
-      // check if built-in cmd or program
+      // Branch on built-in commands that can't pipe or redirect
+      // Change echo and other command's builtIn return no.
       if(!builtIn(myargv) || ((strcmp(myargv[0], "echo")) == 0)) {
-        printf("PathCount = %d\n", pathCount);
+        // Process execution wrapper which pipes, confirm paths, and redirects before exec.
         ExecWrapper(myargv, envp, myPath);
       }else{
+        // Handle built-in commands here to remain inscope for envp
         if(strcmp(myargv[0], "cd") == 0) {
           char *OLDPWD = getenv("OLDPWD");
           char *PWD = getenv("PWD");
 
           if(!myargv[1]){
-            printf("myargv[1] is null: %s\n", myargv[1]);
             char *home = getenv("HOME");
-            printf("HOME: %s\n", home);
+            printf("[cd] (null)\n[envp] HOME: %s\n", home);
+
             if(chdir(home) == 0){
-              printf("chdir %s success.\n", home);
-              setenv("PWD", home, 1);
-              setenv("OLDPWD", PWD, 1);
-            }
-            else
-              printf("chdir %s error.\n", myargv[1]);
-          }
-          else if(strcmp(myargv[1], "-") == 0){
-            printf("1. OLDPWD: %s, PWD: %s\n", OLDPWD, PWD);
-            if(chdir(OLDPWD) == 0){
-              printf("chdir %s success.\n",myargv[1]);
-              setenv("PWD", OLDPWD, 1);
-              setenv("OLDPWD", PWD, 1);
+              printf("[cd] chdir %s success.\n", home);
+              if(setenv("PWD", home, 1) == 0)
+                printf("[cd] setenv success: PWD = %s\n", home);
+              else
+                printf("[set] setenv failure: PWD = %s\n", home);
+
+              if(setenv("OLDPWD", PWD, 1) == 0)
+                printf("[cd] setenv success: OLDPWD = %s\n", PWD);
+              else
+                printf("[cd] setenv failure: OLDPWD = %s\n", PWD);
               OLDPWD = getenv("OLDPWD");
               PWD = getenv("PWD"); 
-              printf("2. OLDPWD: %s, PWD: %s\n", OLDPWD, PWD);
+
+              printf("[envp] OLDPWD: %s \n[envp] PWD: %s\n", OLDPWD, PWD);
             }
             else
-              printf("chdir %s error.\n", myargv[1]);
+              printf("[cd] chdir error.\n");
+          }
+          else if(strcmp(myargv[1], "-") == 0){
+
+            printf("[cd] -\n[envp] OLDPWD: %s \n[envp] PWD: %s\n", OLDPWD, PWD);
+
+            if(chdir(OLDPWD) == 0){
+              printf("[cd] chdir %s success.\n",myargv[1]);
+
+              if(setenv("PWD", OLDPWD, 1) == 0)
+                printf("[cd] setenv success: PWD = %s\n", OLDPWD);
+              else
+                printf("[set] setenv failure: PWD = %s\n", OLDPWD);
+
+              if(setenv("OLDPWD", PWD, 1) == 0)
+                printf("[cd] setenv success: OLDPWD = %s\n", PWD);
+              else
+                printf("[cd] setenv failure: OLDPWD = %s\n", PWD);
+
+              OLDPWD = getenv("OLDPWD");
+              PWD = getenv("PWD"); 
+
+              printf("[envp] OLDPWD: %s \n[envp] PWD: %s\n", OLDPWD, PWD);
+            }
+            else
+              printf("[cd] chdir %s error.\n", myargv[1]);
           }else{
             if(chdir(myargv[1]) == 0){
+
               char buf[1024];
-              printf("chdir %s success.\n",myargv[1]);
+              printf("[cd] %s\n[cd] chdir success.\n",myargv[1]);
+
               if(getcwd(buf, sizeof(buf)) != NULL)
-                printf("%s: Current Working Directory is %s\n", myargv[0], buf);
+                printf("[cd] Current Working Directory is %s\n", buf);
               else
-                printf("getcwd error.\n");
-              setenv("PWD", buf, 1);
-              setenv("OLDPWD", PWD, 1);
-            }
-            else
-              printf("chdir %s error.\n", myargv[1]);
+                printf("[cd] getcwd error.\n");
+              if(setenv("PWD", buf, 1) == 0)
+                printf("[cd] setenv success: PWD = %s\n", buf);
+              else
+                printf("[set] setenv failure: PWD = %s\n", buf);
+
+              if(setenv("OLDPWD", PWD, 1) == 0)
+                printf("[cd] setenv success: OLDPWD = %s\n", PWD);
+              else
+                printf("[cd] setenv failure: OLDPWD = %s\n", PWD);
+              }else
+              printf("[cd] chdir %s error.\n", myargv[1]);
           }
         }else
         if(strcmp(myargv[0], "set") == 0) {
-          printf("setting environment variable..\n");
+
           char* var = myargv[1];
           char* value = myargv[3];
+          printf("[set] environment variable %s to %s\n", var, value);
           if(setenv(var, value, 1) == 0)
-            printf("setenv success: %s = %s\n", var, value);
+            printf("[set] setenv success: %s = %s\n", var, value);
           else
-            printf("setenv failure: %s = %s\n", var, value);
+            printf("[set] setenv failure: %s = %s\n", var, value);
         }
       }
 
@@ -211,7 +248,9 @@ void ExecPath(int inputfd, int outputfd, char**myargv, char** envp, char** myPat
   printf("[%s] passed through path correction function.\n", myargv[0]);
 
   if(strcmp(myargv[0], "echo") == 0) {
+    printf("[echo] skipped through path finding.\n");
     Exec(inputfd, outputfd, myargv, envp);
+    return;
   }
   // Programs:
   // 1. If cmd includes a / character, it is a path, check using stat if file exists, exec file
@@ -326,7 +365,7 @@ void Exec(int inputfd, int outputfd, char **myargv, char **envp) {
 
     if((strcmp(myargv[0], "echo")) == 0) {
       //handle echo with redirection/pipe
-      printf("[%s]%s", myargv[0], myargv[1]);
+      printf("[%s]%s\n", myargv[0], myargv[1]);
       exit(0);
   }
 
