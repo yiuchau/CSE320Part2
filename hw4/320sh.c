@@ -210,7 +210,7 @@ void ExecWrapper(char **myargv, char **envp, char** myPath) {
   int pipefd[2];
   int i, inputfd, cmd, nextCmd = 0;
 
-  printf("[%s] examined for pipes.\n", myargv[0]);
+  printf("[%s]: examined for pipes.\n", myargv[0]);
   do {
     cmd = nextCmd;
 
@@ -220,7 +220,7 @@ void ExecWrapper(char **myargv, char **envp, char** myPath) {
       if(strcmp(myargv[i], "|") == 0) {
         myargv[i] = NULL;
         nextCmd = i + 1;
-        printf("[%s] piped to [%s] at index %d.\n", myargv[cmd], myargv[nextCmd], i);
+        printf("[%s]: piped to [%s] at index %d.\n", myargv[cmd], myargv[nextCmd], i);
       }
     }
 
@@ -236,7 +236,7 @@ void ExecWrapper(char **myargv, char **envp, char** myPath) {
     //printf("cmd: %d, nextCmd: %d\n", cmd, nextCmd);
   }while(1);
 
-  printf("[%s] is the only process or final process of pipe.\n", myargv[cmd]);
+  printf("[%s]: is the only process or final process of pipe.\n", myargv[cmd]);
   ExecPath(inputfd, 1, &myargv[cmd], envp, myPath);
   return;
 }
@@ -244,11 +244,11 @@ void ExecWrapper(char **myargv, char **envp, char** myPath) {
 void ExecPath(int inputfd, int outputfd, char**myargv, char** envp, char** myPath) {
 
 
-  printf("[%s] command is not a built-in command that can not be piped/redirected.\n", myargv[0]);
-  printf("[%s] passed through path correction function.\n", myargv[0]);
+  printf("[%s]: command is not a built-in command that can not be piped/redirected.\n", myargv[0]);
+  printf("[%s]: passed through path correction function.\n", myargv[0]);
 
   if(strcmp(myargv[0], "echo") == 0) {
-    printf("[echo] skipped through path finding.\n");
+    printf("[echo]: skipped through path finding.\n");
     Exec(inputfd, outputfd, myargv, envp);
     return;
   }
@@ -256,12 +256,12 @@ void ExecPath(int inputfd, int outputfd, char**myargv, char** envp, char** myPat
   // 1. If cmd includes a / character, it is a path, check using stat if file exists, exec file
   // 2. else try all values in path list using stat, then exec
   if(strchr(myargv[0], '/') != NULL) {
-    printf("[%s] command is a relative or absolute path.\n", myargv[0]);
+    printf("[%s]: command is a relative or absolute path.\n", myargv[0]);
     struct stat buf;
     if(stat(myargv[0],&buf) == 0) {
       // file exists
 
-      printf("[%s] File exists, executing..\n", myargv[0]);
+      printf("[%s]: File exists, executing..\n", myargv[0]);
       Exec(inputfd, outputfd, myargv, envp);
     }
   } else {
@@ -276,12 +276,12 @@ void ExecPath(int inputfd, int outputfd, char**myargv, char** envp, char** myPat
       strcpy(filePath, myPath[i]);
       strcat(filePath, "/");
       strcat(filePath, myargv[0]);
-      printf("Filepath: %s\n", filePath);
+      //printf("Filepath: %s\n", filePath);
       if(stat(filePath,&buf) == 0) {
           // file exists
           //update argv
         myargv[0] = filePath;
-        printf("[%s] Path corrected, executing..\n", myargv[0]);
+        printf("[%s]: Path corrected, executing..\n", myargv[0]);
         Exec(inputfd, outputfd, myargv, envp);
         found = 1;
       }
@@ -289,7 +289,7 @@ void ExecPath(int inputfd, int outputfd, char**myargv, char** envp, char** myPat
     }
 
     if(!found)
-        printf("[%s] command not found in any paths.\n", myargv[0]);
+        printf("[%s]: command not found in any paths.\n", myargv[0]);
     }
 
     return;
@@ -331,7 +331,7 @@ void Exec(int inputfd, int outputfd, char **myargv, char **envp) {
 
         myargv[i] = NULL;
         myargv[i + 1] = NULL;
-        printf("Test: %s, %s\n", myargv[i], myargv[i + 1]);
+        //printf("Test: %s, %s\n", myargv[i], myargv[i + 1]);
         i++; //Increment i, skip myargv[i + 1] for other redirections
       }else
       if((index = (strchr(myargv[i], '>'))) != NULL) {
@@ -365,10 +365,12 @@ void Exec(int inputfd, int outputfd, char **myargv, char **envp) {
 
     if((strcmp(myargv[0], "echo")) == 0) {
       //handle echo with redirection/pipe
-      printf("[%s]%s\n", myargv[0], myargv[1]);
+      printf("[%s]: %s\n", myargv[0], myargv[1]);
       exit(0);
   }
 
+
+    printf("--- Output from execution below ---\n");
     if((execve(myargv[0], myargv, envp)) < 0){
       printf("%s command not found.\n", myargv[0]);
     }
@@ -433,6 +435,6 @@ int builtIn(char** argv) {
     isBuiltIn = 1;
   }
 
-  printf("Built-in: %d\n", isBuiltIn);
+  printf("[%s] Built-in: %d\n", argv[0], isBuiltIn);
   return isBuiltIn;
 }
