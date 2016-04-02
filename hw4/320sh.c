@@ -65,9 +65,9 @@ int main (int argc, char ** argv, char **envp) {
   }
 
   // Handle ctrl-c
-  //signal(SIGINT, sigint_handler);
+  signal(SIGINT, sigint_handler);
   // Handle ctrl-z
-  //signal(SIGTSTP, sigtstp_handler);
+  signal(SIGTSTP, sigtstp_handler);
 
   initJobs();
 
