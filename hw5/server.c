@@ -13,7 +13,7 @@ struct user {
     char * username;
     int connfd;
     //ipaddr
-    struct sockaddr_storage sockaddr;
+    struct sockaddr_storage *sockaddr;
     struct user *next;
 }*users_head, *users_tail;
 
@@ -37,7 +37,7 @@ int main(int argc, char **argv)
     //*connfdp
     char opt;
     socklen_t clientlen;
-    struct sockaddr_storage clientaddr;
+    struct sockaddr_storage * clientaddr;
     pthread_t tid;
     struct user *newUser;
     fd_set read_set, ready_set;
@@ -97,15 +97,16 @@ int main(int argc, char **argv)
             fflush(stdout);
             command(); /* Read command line from stdin */
         if (FD_ISSET(listenfd, &ready_set)) { 
-            fprintf(stdout, "\x1B[1;34mReading from listenfd.\n");
+            fprintf(stdout, "\x1B[1;34mReading from listenfd: New connection.\n");
             fflush(stdout);
             clientlen = sizeof(struct sockaddr_storage);
             //connfdp = Malloc(sizeof(int)); 
             //*connfdp = Accept(listenfd, (SA *) &clientaddr, &clientlen);
             newUser = Malloc(sizeof(struct user));
-            newUser->sockaddr = clientaddr;
             //setip
             newUser->connfd = Accept(listenfd, (SA *) &clientaddr, &clientlen);
+            
+            newUser->sockaddr = clientaddr;
 
             Pthread_create(&tid, NULL, loginThread, newUser);
             //Free(connfdp);
@@ -124,7 +125,7 @@ void *loginThread(void *vargp)
     Pthread_detach(pthread_self()); 
     //Free(vargp); 
 
-    fprintf(stderr, "\x1B[1;34mNew login thread created.\n");
+    fprintf(stderr, "\x1B[1;34mNew login thread created for %d.\n", newUser->connfd);
 
     // Attempt to login,
     Read(newUser->connfd, username, MAXLINE);
@@ -187,9 +188,20 @@ void command(void) {
 
     if (strcmp(buf, "/help") == 0) {
         // list all server commands
+        fprintf(stderr, "/help entered\n");
     }
-    else if (strcmp(buf, "/users") == 0) {
+    else if (strncmp(buf, "/users", 6) == 0) {
+        fprintf(stderr, "/users entered\n");
         // dump lists of currently logged users
+        struct user *ptr = users_head;
+        fprintf(stdout, "|-----User-----|---Address---|--Port--|\n");
+        while(ptr != NULL) {
+            struct sockaddr_in *sin  = (struct sockaddr_in *)&ptr->sockaddr;
+
+            fprintf(stdout, "|%14s|%14s|%6d\n", ptr->username, inet_ntoa(sin->sin_addr),
+            (int) ntohs(sin->sin_port) );
+            ptr = ptr->next;
+        }
     }
     else if (strcmp(buf, "/shutdown") == 0) {
         // disconnect all users, save states, close sockets, files, free heap
