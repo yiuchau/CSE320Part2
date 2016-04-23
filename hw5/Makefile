@@ -1,11 +1,16 @@
-all: server client chat
+CFLAGS = -Wall -Werror
+BINS: server client
 
-server:
-	gcc -Wall -Werror -o server server.c
-client:	
-	gcc -Wall -Werror -o client client.c
-chat:	
-	gcc -Wall -Werror -o chat chat.c
+all: $(BINS)
+
+server: server.c csapp.o
+	gcc $(CFLAGS) -pthread -o server server.c csapp.o
+
+client:	client.o csapp.o
+	gcc $(CFLAGS) -pthread -o client client.c csapp.o
+
+csapp.o: csapp.c
+	gcc -c csapp.c
 
 clean:
-	rm -f *~ *.o 320sh
+	rm -f *.o server client
