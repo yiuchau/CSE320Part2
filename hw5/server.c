@@ -13,7 +13,7 @@ struct user {
     char * username;
     int connfd;
     //ipaddr
-    struct sockaddr_storage *sockaddr;
+    struct sockaddr_storage sockaddr;
     struct user *next;
 }*users_head, *users_tail;
 
@@ -37,7 +37,7 @@ int main(int argc, char **argv)
     //*connfdp
     char opt;
     socklen_t clientlen;
-    struct sockaddr_storage * clientaddr;
+    struct sockaddr_storage clientaddr;
     pthread_t tid;
     struct user *newUser;
     fd_set read_set, ready_set;
@@ -105,7 +105,7 @@ int main(int argc, char **argv)
             newUser = Malloc(sizeof(struct user));
             //setip
             newUser->connfd = Accept(listenfd, (SA *) &clientaddr, &clientlen);
-            
+
             newUser->sockaddr = clientaddr;
 
             Pthread_create(&tid, NULL, loginThread, newUser);
@@ -120,7 +120,7 @@ void *loginThread(void *vargp)
     //int connfd = *((int *)vargp);
     struct user *newUser = ((struct user *)vargp);
     struct user *ptr = users_head;
-    char username[MAXLINE];
+    char* username = (char*) Malloc(sizeof(char*) * MAXLINE);
     //struct user *usersPtr = users_head;
     Pthread_detach(pthread_self()); 
     //Free(vargp); 
@@ -141,6 +141,7 @@ void *loginThread(void *vargp)
             fprintf(stderr, "\x1B[1;31mUsername %s taken.\n", username);
             Close(newUser->connfd);
             Free(newUser);
+            Free(username);
 
             //send a message?
             return NULL;
@@ -159,8 +160,8 @@ void *loginThread(void *vargp)
         users_tail = users_tail->next;
     }
 
-    users_tail->username = (char*)Malloc(sizeof(char) * strlen(username));
-    strcpy(users_tail->username, username);
+    users_tail->username = username;
+    //strcpy(users_tail->username, username);
 
     fprintf(stderr, "\x1B[1;34mHead's username %s\n", users_head->username);
     //prompt for password
