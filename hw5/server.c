@@ -1,15 +1,22 @@
 #include "csapp.h"
+#include "time.h"
 //#include "cse320.h"
 
 int listenfd;
+char *protocol_end = " \r\n\r\n";
+int plen = 5;
+char *MOTD;
+pthread_t commtid;
 
 void echo(int connfd);
 void *loginThread(void *vargp);
+void *commThread(void* vargp);
 void command(void);
+void endServer(void);
 
 
 struct user {
-    //login_time
+    time_t login_time;
     char * username;
     int connfd;
     //ipaddr
@@ -43,7 +50,6 @@ int main(int argc, char **argv)
     fd_set read_set, ready_set;
 
     if (argc < 3) {
-        //print usage statement
         Usage;
         exit(0);
     }
@@ -71,13 +77,17 @@ int main(int argc, char **argv)
         }
     }
 
+
     //changed to global for sig handling
     listenfd = Open_listenfd(atoi(argv[argc - 2]));
     //handle errors
     fprintf(stdout, "\x1B[1;34mCurrently listening on port %d\n", atoi(argv[argc - 2]));
 
+
+    MOTD = argv[argc - 1];
     //signal handler to close socket upon ctrl-c
     Signal(SIGINT, sigintHandler);
+
 
 
     FD_ZERO(&read_set);              /* Clear read set */ 
@@ -85,20 +95,20 @@ int main(int argc, char **argv)
     FD_SET(listenfd, &read_set);     /* Add listenfd to read set */
 
     while (1) {
-        //create com thread
-        if(users_head != NULL) {
-            //saved thread for comm thread is closed
-            //Pthread_create(&tid, NULL, commThread, NULL);
-        }
+
         ready_set = read_set;
-        Select(listenfd+1, &ready_set, NULL, NULL, NULL); 
-        if (FD_ISSET(STDIN_FILENO, &ready_set)) 
-            fprintf(stdout, "\x1B[1;34mReading command line from stdin.\n");
-            fflush(stdout);
+
+        Select(FD_SETSIZE, &ready_set, NULL, NULL, NULL); 
+
+        if (FD_ISSET(STDIN_FILENO, &ready_set)) {
+            //fprintf(stderr, "\x1B[1;34mReading command line from stdin.\n");
+            //fflush(stderr);
             command(); /* Read command line from stdin */
+        }
+
         if (FD_ISSET(listenfd, &ready_set)) { 
-            fprintf(stdout, "\x1B[1;34mReading from listenfd: New connection.\n");
-            fflush(stdout);
+            fprintf(stderr, "\x1B[1;34mReading from listenfd: New connection.\n");
+            //fflush(stderr);
             clientlen = sizeof(struct sockaddr_storage);
             //connfdp = Malloc(sizeof(int)); 
             //*connfdp = Accept(listenfd, (SA *) &clientaddr, &clientlen);
@@ -110,7 +120,7 @@ int main(int argc, char **argv)
 
             Pthread_create(&tid, NULL, loginThread, newUser);
             //Free(connfdp);
-    }
+        }
     }
 }
 
@@ -121,20 +131,73 @@ void *loginThread(void *vargp)
     struct user *newUser = ((struct user *)vargp);
     struct user *ptr = users_head;
     char* username = (char*) Malloc(sizeof(char*) * MAXLINE);
+    char buf[MAXLINE];
+    int connfd = newUser->connfd;
     //struct user *usersPtr = users_head;
     Pthread_detach(pthread_self()); 
     //Free(vargp); 
 
     fprintf(stderr, "\x1B[1;34mNew login thread created for %d.\n", newUser->connfd);
 
-    // Attempt to login,
-    Read(newUser->connfd, username, MAXLINE);
+    // Communicate with user according to wolfie protocol
+
+
+    Read(connfd, buf, MAXLINE);
+
+    if(strncmp(buf, "WOLFIE", (size_t)(strstr(buf, " \r\n\r\n") - buf)) == 0) {
+        fprintf(stderr, "\x1B[1;34m%s received.\n", buf);
+
+        /*
+        strncpy(buf, "I AM ", 5);
+        strncpy(&buf[5], username, strlen(username));
+        strncpy(&buf[5 + strlen(username)], " \r\n\r\n", 5);
+        Write(clientfd, buf, strlen(buf));
+        */
+
+        memset(buf, 0, sizeof(buf));
+        strncpy(buf, "EIFLOW", 6);
+        strncpy(&buf[6], protocol_end, plen + 1);
+        Write(connfd, buf, strlen(buf));
+
+        //Write(connfd, "EIFLOW", 6);
+        //Write(connfd, protocol_end, plen);
+
+        memset(buf, 0, sizeof(buf));
+        
+        Read(connfd, buf, sizeof(buf));
+
+        if(strncmp(buf, "I AM ", 5) == 0 &&
+            strstr(buf, protocol_end) != NULL) {
+
+            fprintf(stderr, "\x1B[1;34m%s received.\n", buf);
+            strncpy(username, &buf[5], (size_t)(strstr(buf, protocol_end) - &buf[5]));
+
+        
+            memset(buf, 0, sizeof(buf));
+            strncpy(buf, "HI ", 3);
+            strncpy(&buf[3], username, strlen(username));
+            strncpy(&buf[3 + strlen(username)], protocol_end, plen);
+            Write(connfd, buf, strlen(buf));
+        
+
+            //Write(connfd, "HI ", 3);
+            //Write(connfd, username, strlen(username));
+            //Write(connfd, protocol_end, plen);
+
+        }else{
+
+            fprintf(stderr, "Expected: I AM <Username>, invalid response from client: %s\n", buf);
+        }
+    }else{
+
+        fprintf(stderr, "Expected: WOLFIE, invalid response from client: %s\n", buf);
+    }
 
 
     fprintf(stderr, "\x1B[1;34mUsername %s requested.\n", username);
 
     while(ptr != NULL) {
-        printf("In user verifcation while loop: %s\n", ptr->username);
+        fprintf(stderr,"In user verification while loop: %s\n", ptr->username);
         if(strcmp(ptr->username, username) == 0) {
             //username taken
 
@@ -149,19 +212,29 @@ void *loginThread(void *vargp)
         ptr = ptr->next;
     }
 
-    fprintf(stdout, "\x1B[1;34mUser %s saved to list.\n", username);
-
     //username not there, save user in list
     if(users_head == NULL) {
         users_head = newUser;
         users_tail = users_head;
+        //spawn comm thread
+
+        Pthread_create(&commtid, NULL, commThread, NULL);
     }else{
         users_tail->next = newUser;
         users_tail = users_tail->next;
     }
 
+    users_tail->login_time = time(NULL);
     users_tail->username = username;
     //strcpy(users_tail->username, username);
+
+
+
+    fprintf(stderr, "\x1B[1;34mUser %s saved to list.\n", username);
+    //send MOTD
+    Write(connfd, "MOTD ", 5);
+    Write(connfd, MOTD, strlen(MOTD));
+    Write(connfd, protocol_end, plen);
 
     fprintf(stderr, "\x1B[1;34mHead's username %s\n", users_head->username);
     //prompt for password
@@ -171,12 +244,34 @@ void *loginThread(void *vargp)
     return NULL;
 }
 
-void *commThread(){
+void *commThread(void* vargp){
     // return if no users
+
+    fd_set read_set, ready_set;
+    FD_ZERO(&read_set); /* Clear read set */
+
+    /*init read_set with conn fds*/
+    for(struct user *ptr = users_head; ptr != NULL; ptr = ptr->next) {
+        FD_SET(ptr->connfd, &read_set);
+    }
+
     while(1){
         if(users_head == NULL)
             return NULL;
+
+        ready_set = read_set;
+
+        Select(FD_SETSIZE, &ready_set, NULL, NULL, NULL);
+        for(int i = 0; i < FD_SETSIZE; i++) {
+            if(FD_ISSET(i, &read_set)) {
+                //perform read
+
+            }
+        } 
+
     }
+
+    return NULL;
 }
 
 void command(void) {
@@ -184,28 +279,46 @@ void command(void) {
     if (!Fgets(buf, MAXLINE, stdin))
         exit(0); /* EOF */
 
-    printf("%s", buf); /* Process the input command */
+    printf("\x1B[0m%s", buf); /* Process the input command */
     fflush(stdout);
 
-    if (strcmp(buf, "/help") == 0) {
+    if (strncmp(buf, "/help", 5) == 0) {
         // list all server commands
-        fprintf(stderr, "/help entered\n");
+        fprintf(stderr, "\x1B[1;34mSystem command: /help entered\n");
+        fprintf(stdout, "/help: Print all system commands\n\
+                         /users: Print all currently logged users\n\
+                         /shutdown: Cleanly disconnect all users.\n");
     }
     else if (strncmp(buf, "/users", 6) == 0) {
-        fprintf(stderr, "/users entered\n");
+        fprintf(stderr, "\x1B[1;34mSystem command: /users entered\n");
         // dump lists of currently logged users
         struct user *ptr = users_head;
         fprintf(stdout, "|-----User-----|---Address---|--Port--|\n");
         while(ptr != NULL) {
             struct sockaddr_in *sin  = (struct sockaddr_in *)&ptr->sockaddr;
 
-            fprintf(stdout, "|%14s|%14s|%6d\n", ptr->username, inet_ntoa(sin->sin_addr),
+            fprintf(stdout, "|%14s|%13s|%8d|\n", ptr->username, inet_ntoa(sin->sin_addr),
             (int) ntohs(sin->sin_port) );
             ptr = ptr->next;
         }
     }
-    else if (strcmp(buf, "/shutdown") == 0) {
+    else if (strncmp(buf, "/shutdown", 9) == 0) {
         // disconnect all users, save states, close sockets, files, free heap
+
+        fprintf(stderr, "\x1B[1;34mSystem command: /shutdown entered\n");
+        void endServer();
+    }
+    return;
+}
+
+void endServer() {
+    struct user *ptr = users_head, *tptr;
+    while(ptr != NULL) {
+        Free(ptr-> username);
+        Close(ptr->connfd);
+        tptr = ptr->next;
+        Free(ptr);
+        ptr = tptr;
     }
     return;
 }
