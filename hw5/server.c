@@ -295,6 +295,16 @@ void *commThread(void* vargp){
 
         ready_set = read_set;
 
+
+
+        FD_ZERO(&read_set); /* Clear read set */
+
+        /*init read_set with conn fds*/
+        for(ptr = users_head; ptr != NULL; ptr = ptr->next) {
+            FD_SET(ptr->connfd, &read_set);
+            fprintf(stderr, "Adding user %s to comm thread.\n", ptr->username);    
+        }
+
         Select(FD_SETSIZE, &ready_set, NULL, NULL, NULL);
         for(int i = 0; i < FD_SETSIZE; i++) {
             if(FD_ISSET(i, &ready_set)) {
