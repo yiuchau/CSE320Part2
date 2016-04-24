@@ -133,7 +133,7 @@ void *loginThread(void *vargp)
     //int connfd = *((int *)vargp);
     struct user *newUser = ((struct user *)vargp);
     struct user *ptr = users_head;
-    char* username = (char*) Malloc(sizeof(char*) * MAXLINE);
+    char* username = (char*) Malloc(sizeof(char) * MAXLINE);
     char buf[MAXLINE];
     int connfd = newUser->connfd;
     //struct user *usersPtr = users_head;
@@ -174,6 +174,7 @@ void *loginThread(void *vargp)
 
             fprintf(stderr, "\x1B[1;34m%s received.\n", buf);
             memset(username, 0, sizeof(&username));
+            fprintf(stderr, "Test length: %d\n", (int)(strstr(buf, protocol_end) - &buf[5]));
             strncpy(username, &buf[5], (size_t)(strstr(buf, protocol_end) - &buf[5]));
 
         }else{
@@ -270,29 +271,33 @@ void *commThread(void* vargp){
     // return if no users
 
     fd_set read_set, ready_set;
-    FD_ZERO(&read_set); /* Clear read set */
     struct user *ptr;
+    //char test[1];
 
 
 
     fprintf(stderr, "\x1B[1;34mNew communication thread created.\n");
 
 
+
+    FD_ZERO(&read_set); /* Clear read set */
+
+    /*init read_set with conn fds*/
+    for(ptr = users_head; ptr != NULL; ptr = ptr->next) {
+        FD_SET(ptr->connfd, &read_set);
+        fprintf(stderr, "Adding user %s to comm thread.\n", ptr->username);    
+    }
+
+
     while(1){
         if(users_head == NULL)
             return NULL;
-
-        /*init read_set with conn fds*/
-        for(ptr = users_head; ptr != NULL; ptr = ptr->next) {
-            FD_SET(ptr->connfd, &read_set);
-            //fprintf(stderr, "Adding user %s to comm thread.\n", ptr->username);
-        }
 
         ready_set = read_set;
 
         Select(FD_SETSIZE, &ready_set, NULL, NULL, NULL);
         for(int i = 0; i < FD_SETSIZE; i++) {
-            if(FD_ISSET(i, &read_set)) {
+            if(FD_ISSET(i, &ready_set)) {
                 //perform read
 
                 char input[MAXLINE], output[MAXLINE];
@@ -304,12 +309,10 @@ void *commThread(void* vargp){
                         break;
                 }
 
-                if(Read(i, input, MAXLINE) < 0){
+                if(Read(i, input, MAXLINE) <= 0){
                     Remove(ptr);
-                    
-                }
-
-                if (strncmp(input, "TIME", 4) == 0 &&
+                    FD_CLR(i, &read_set);
+                }else if (strncmp(input, "TIME", 4) == 0 &&
                         strncmp(&input[6], protocol_end, plen)) {
 
                     fprintf(stderr, "\x1B[1;34mTime called by %s.\n", ptr->username);
@@ -334,8 +337,16 @@ struct user* Remove(struct user *ptr){
     struct user *tptr;
 
     for(tptr = users_head; tptr != NULL; tptr = tptr->next) {
-        if(tptr->next == ptr)
+        if(tptr->next == ptr){
             tptr->next = ptr->next;
+        }
+
+        if(ptr == users_tail)
+            users_tail = tptr;
+    }
+
+    if(ptr == users_head){
+        users_head = users_head->next;
     }
 
     tptr = ptr->next;
