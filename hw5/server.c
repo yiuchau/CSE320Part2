@@ -15,6 +15,9 @@ void command(void);
 void endServer(void);
 
 
+struct user* Remove(struct user *ptr);
+
+
 struct user {
     time_t login_time;
     char * username;
@@ -170,19 +173,8 @@ void *loginThread(void *vargp)
             strstr(buf, protocol_end) != NULL) {
 
             fprintf(stderr, "\x1B[1;34m%s received.\n", buf);
+            memset(username, 0, sizeof(&username));
             strncpy(username, &buf[5], (size_t)(strstr(buf, protocol_end) - &buf[5]));
-
-        
-            memset(buf, 0, sizeof(buf));
-            strncpy(buf, "HI ", 3);
-            strncpy(&buf[3], username, strlen(username));
-            strncpy(&buf[3 + strlen(username)], protocol_end, plen);
-            Write(connfd, buf, strlen(buf));
-        
-
-            //Write(connfd, "HI ", 3);
-            //Write(connfd, username, strlen(username));
-            //Write(connfd, protocol_end, plen);
 
         }else{
 
@@ -202,15 +194,45 @@ void *loginThread(void *vargp)
             //username taken
 
             fprintf(stderr, "\x1B[1;31mUsername %s taken.\n", username);
-            Close(newUser->connfd);
+            //comm with client
+
+
             Free(newUser);
             Free(username);
+
+            memset(buf, 0, sizeof(buf));
+            strncpy(buf, "ERR 00 USER NAME TAKEN", 22);
+            strncpy(&buf[22], protocol_end, plen);
+            strncpy(&buf[22 + plen], "BYE", 3);
+            strncpy(&buf[22 + plen + 3], protocol_end, plen);
+            Write(connfd, buf, strlen(buf));
+
+            memset(buf, 0, sizeof(buf));
+        
+            Read(connfd, buf, sizeof(buf));
+
+            if(strncmp(buf, "BYE", 3) == 0 &&
+                strncmp(&buf[3], protocol_end, plen) == 0) {
+
+                fprintf(stderr, "\x1B[1;34m%s received.\n", buf);
+            }else{
+                fprintf(stderr, "Expected: BYE, invalid response from client: %s\n", buf);
+            }
+
+            Close(connfd);
 
             //send a message?
             return NULL;
         }
         ptr = ptr->next;
     }
+
+
+    memset(buf, 0, sizeof(buf));
+    strncpy(buf, "HI ", 3);
+    strncpy(&buf[3], username, strlen(username));
+    strncpy(&buf[3 + strlen(username)], protocol_end, plen);
+    Write(connfd, buf, strlen(buf));
 
     //username not there, save user in list
     if(users_head == NULL) {
@@ -249,15 +271,22 @@ void *commThread(void* vargp){
 
     fd_set read_set, ready_set;
     FD_ZERO(&read_set); /* Clear read set */
+    struct user *ptr;
 
-    /*init read_set with conn fds*/
-    for(struct user *ptr = users_head; ptr != NULL; ptr = ptr->next) {
-        FD_SET(ptr->connfd, &read_set);
-    }
+
+
+    fprintf(stderr, "\x1B[1;34mNew communication thread created.\n");
+
 
     while(1){
         if(users_head == NULL)
             return NULL;
+
+        /*init read_set with conn fds*/
+        for(ptr = users_head; ptr != NULL; ptr = ptr->next) {
+            FD_SET(ptr->connfd, &read_set);
+            //fprintf(stderr, "Adding user %s to comm thread.\n", ptr->username);
+        }
 
         ready_set = read_set;
 
@@ -266,6 +295,33 @@ void *commThread(void* vargp){
             if(FD_ISSET(i, &read_set)) {
                 //perform read
 
+                char input[MAXLINE], output[MAXLINE];
+
+                fprintf(stderr, "\x1B[1;34mReading from connfd %d.\n", i);
+
+                for(ptr = users_head; ptr != NULL; ptr = ptr->next) {
+                    if(ptr->connfd == i)
+                        break;
+                }
+
+                if(Read(i, input, MAXLINE) < 0){
+                    Remove(ptr);
+                    
+                }
+
+                if (strncmp(input, "TIME", 4) == 0 &&
+                        strncmp(&input[6], protocol_end, plen)) {
+
+                    fprintf(stderr, "\x1B[1;34mTime called by %s.\n", ptr->username);
+                    time_t time_elapsed = time(NULL);
+                    time_elapsed -= ptr->login_time;
+
+                    strncpy(output, "EMIT ", 5);
+                    sprintf(&output[5], "%d", (int)time_elapsed);
+                    strncpy(&output[strlen(output)], protocol_end, plen);
+                    Write(i, output, MAXLINE);
+
+                }
             }
         } 
 
@@ -274,13 +330,31 @@ void *commThread(void* vargp){
     return NULL;
 }
 
+struct user* Remove(struct user *ptr){
+    struct user *tptr;
+
+    for(tptr = users_head; tptr != NULL; tptr = tptr->next) {
+        if(tptr->next == ptr)
+            tptr->next = ptr->next;
+    }
+
+    tptr = ptr->next;
+
+    fprintf(stderr, "Deleting user: %s\n", ptr->username);
+    Free(ptr-> username);
+    Close(ptr->connfd);
+    Free(ptr);
+
+    return tptr;
+}
+
 void command(void) {
     char buf[MAXLINE];
     if (!Fgets(buf, MAXLINE, stdin))
         exit(0); /* EOF */
 
     printf("\x1B[0m%s", buf); /* Process the input command */
-    fflush(stdout);
+    //fflush(stdout);
 
     if (strncmp(buf, "/help", 5) == 0) {
         // list all server commands
@@ -306,19 +380,21 @@ void command(void) {
         // disconnect all users, save states, close sockets, files, free heap
 
         fprintf(stderr, "\x1B[1;34mSystem command: /shutdown entered\n");
-        void endServer();
+        endServer();
     }
     return;
 }
 
 void endServer() {
-    struct user *ptr = users_head, *tptr;
+    struct user *ptr = users_head;
+
     while(ptr != NULL) {
-        Free(ptr-> username);
-        Close(ptr->connfd);
-        tptr = ptr->next;
-        Free(ptr);
-        ptr = tptr;
+        fprintf(stderr, "Deleting user: %s\n", ptr->username);
+        ptr = Remove(ptr);
     }
+
+    users_head = NULL;
+    users_tail = NULL;
+
     return;
 }
