@@ -25,7 +25,7 @@ struct user {
     //ipaddr
     struct sockaddr_storage sockaddr;
     struct user *next;
-}*users_head, *users_tail;
+}*users_head;
 
 
 #define Usage printf("./server [-h|-v] PORT_NUMBER MOTD\n \
@@ -235,20 +235,21 @@ void *loginThread(void *vargp)
     strncpy(&buf[3 + strlen(username)], protocol_end, plen);
     Write(connfd, buf, strlen(buf));
 
+
+    newUser->login_time = time(NULL);
+    newUser->username = username;
     //username not there, save user in list
     if(users_head == NULL) {
-        users_head = newUser;
-        users_tail = users_head;
         //spawn comm thread
 
         Pthread_create(&commtid, NULL, commThread, NULL);
+        newUser->next = NULL;
     }else{
-        users_tail->next = newUser;
-        users_tail = users_tail->next;
+        newUser->next = users_head;
     }
 
-    users_tail->login_time = time(NULL);
-    users_tail->username = username;
+
+    users_head = newUser;
     //strcpy(users_tail->username, username);
 
 
@@ -297,10 +298,6 @@ void *commThread(void* vargp){
         if(users_head == NULL)
             return NULL;
 
-        ready_set = read_set;
-
-
-
         FD_ZERO(&read_set); /* Clear read set */
 
         /*init read_set with conn fds*/
@@ -308,6 +305,9 @@ void *commThread(void* vargp){
             FD_SET(ptr->connfd, &read_set);
             fprintf(stderr, "Adding user %s to comm thread.\n", ptr->username);    
         }
+
+
+        ready_set = read_set;
 
         Select(FD_SETSIZE, &ready_set, NULL, NULL, NULL);
         for(int i = 0; i < FD_SETSIZE; i++) {
@@ -325,8 +325,15 @@ void *commThread(void* vargp){
                         break;
                 }
 
-                if(Read(i, input, MAXLINE) <= 0){
-                    Remove(ptr);
+                if(fcntl(i, F_GETFD) == -1) {
+                    fprintf(stderr, "\x1B[1;34m%d Connfd invalid.\n", i);
+                    if(ptr != NULL)
+                        Remove(ptr);
+                    FD_CLR(i, &read_set);
+                }else if(Read(i, input, MAXLINE) <= 0){
+                    fprintf(stderr, "\x1B[1;34mClient at connfd %d disconnected.\n", i);
+                    if(ptr != NULL)
+                        Remove(ptr);
                     FD_CLR(i, &read_set);
                 }else if (strncmp(input, "TIME", 4) == 0 &&
                         strncmp(&input[4], protocol_end, plen) == 0) {
@@ -368,7 +375,13 @@ void *commThread(void* vargp){
                     //Add handling for output above MAXLINE chars
                     Write(i, output, MAXLINE);
 
-                } 
+                }else if(strncmp(input, "BYE", 3) == 0 &&
+                    strncmp(&input[3], protocol_end, plen) == 0) {
+                    strncpy(output, "BYE", 3);
+                    strncpy(&output[3], protocol_end, plen);
+                    Write(i, output, sizeof(output));
+                    Remove(ptr);
+                }
             }
         } 
 
@@ -384,9 +397,6 @@ struct user* Remove(struct user *ptr){
         if(tptr->next == ptr){
             tptr->next = ptr->next;
         }
-
-        if(ptr == users_tail)
-            users_tail = tptr;
     }
 
     if(ptr == users_head){
@@ -442,14 +452,18 @@ void command(void) {
 
 void endServer() {
     struct user *ptr = users_head;
+    char output[MAXLINE];
 
     while(ptr != NULL) {
         fprintf(stderr, "Deleting user: %s\n", ptr->username);
+        //send bye to all clients
+        strncpy(output, "BYE", 3);
+        strncpy(&output[3], protocol_end, plen);
+        Write(ptr->connfd, output, sizeof(output));
         ptr = Remove(ptr);
     }
 
     users_head = NULL;
-    users_tail = NULL;
 
     return;
 }

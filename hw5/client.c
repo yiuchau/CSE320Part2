@@ -2,6 +2,8 @@
 
 void command();
 
+void serverCommand();
+
 char *protocol_end = " \r\n\r\n";
 int plen = 5;
 size_t buf_used;
@@ -156,8 +158,9 @@ int main(int argc, char **argv)
         }
         if (FD_ISSET(clientfd, &ready_set)) { 
             /* Read from clientfd */
-            //fprintf(stderr, "\x1B[1;34mReading command line from clientfd.\n");
+            fprintf(stderr, "\x1B[1;34mReading command line from clientfd.\n");
             //fflush(stderr);
+            serverCommand();
         }
     }
 
@@ -166,7 +169,7 @@ int main(int argc, char **argv)
 }
 
 void command() {
-    char cmd[MAXLINE], input[MAXLINE], output[MAXLINE];
+    char cmd[MAXLINE], output[MAXLINE];
     if (!Fgets(cmd, MAXLINE, stdin))
         exit(0); /* EOF */
 
@@ -175,8 +178,10 @@ void command() {
     if (strncmp(cmd, "/time", 5) == 0) {
 
         // asks server for seconds elapsed
+        /*
         time_t time_elapsed;
         int hours, minutes, seconds;
+        */
 
         fprintf(stderr, "\x1B[1;34mClient command: /time entered\n");
 
@@ -185,7 +190,7 @@ void command() {
         strncpy(&output[4], protocol_end, plen);
         Write(clientfd, output, sizeof(output));
 
-
+        /*
         memset(input, 0, sizeof(input));
         Read(clientfd, input, sizeof(input));
 
@@ -202,6 +207,7 @@ void command() {
         }else{
             fprintf(stderr, "Expected: TIME, invalid response from server: %s\n", input);
         }
+        */
 
     } 
     else if (strncmp(cmd, "/help", 5) == 0) {
@@ -222,9 +228,11 @@ void command() {
         strncpy(&output[5], protocol_end, plen);
         Write(clientfd, output, sizeof(output));
 
+/*
         memset(input, 0, sizeof(input));
         Read(clientfd, input, sizeof(input));
 
+        
         if(strncmp("UTSIL", input, 5) == 0 &&
             strstr(&input[5], protocol_end) != NULL){
 
@@ -243,20 +251,88 @@ void command() {
         }else{
             fprintf(stderr, "Expected: UTSIL, invalid response from server: %s\n", input);
         }
+        */
 
 
 
     }
-    else if (strncmp(cmd, "/logout", 8) == 0) {
+    else if (strncmp(cmd, "/logout", 7) == 0) {
         // disconnect with server
 
         fprintf(stderr, "\x1B[1;34mClient command: /logout entered\n");
 
+        memset(output, 0, sizeof(output));
+        strncpy(output, "BYE", 3);
+        strncpy(&output[3], protocol_end, plen);
+        Write(clientfd, output, sizeof(output));
+
+        /*
+        memset(input, 0, sizeof(input));
+        Read(clientfd, input, sizeof(input));
+
         Close(clientfd);
         exit(0);
+        */
     }
     return;
 }
-/* $end select */
+
+void serverCommand() {
+    char input[MAXLINE];
+
+    printf("Input from socket.\n");
+
+    memset(input, 0, sizeof(input));
+    if(Read(clientfd, input, sizeof(input)) <= 0) {
+        close(clientfd);
+        printf("Server has closed.\n");
+    }
+
+    if(strncmp("EMIT", input, 4) == 0 &&
+            strstr(input, protocol_end) != 0){
+
+        // asks server for seconds elapsed
+        time_t time_elapsed;
+        int hours, minutes, seconds;
+
+            time_elapsed = atoi(&input[5]);
+            hours = (int)time_elapsed / 3600;
+            time_elapsed = time_elapsed % 3600;
+            minutes = (int)time_elapsed / 60;
+            seconds = time_elapsed % 60;
+            fprintf(stdout, "connected for %d hours %d minutes %d seconds\n", hours, minutes, seconds);
+
+        
+
+        /*else{
+            fprintf(stderr, "Expected: TIME, invalid response from server: %s\n", input);
+    }*/
+    }
+    else if(strncmp("UTSIL", input, 5) == 0 &&
+        strstr(&input[5], protocol_end) != NULL){
+
+        int offset = 6;
+
+        fprintf(stdout, "-----Logged In Users-----\n");
+        while(strstr(&input[offset], protocol_end) != NULL) {
+            fprintf(stderr, "Offset: %d", offset);
+            //parse the users
+            Write(STDOUT_FILENO, &input[offset], (int)(strstr(&input[offset], " \r\n") - &input[offset]));
+            offset += (int)(strstr(&input[offset], " \r\n") - &input[offset]) + 4;
+            Write(STDOUT_FILENO, "\n", 1);
+        }
+
+    /*
+    else{
+        fprintf(stderr, "Expected: UTSIL, invalid response from server: %s\n", input);
+    }*/
+    }
+    else if(strncmp("BYE", input, 3) == 0 &&
+        strstr(&input[3], protocol_end) != NULL){
+        close(clientfd);
+        fprintf(stdout, "Disconnected from server.\n");
+        exit(EXIT_SUCCESS);
+    }
+}
 
 
