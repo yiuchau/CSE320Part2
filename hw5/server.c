@@ -169,7 +169,7 @@ void *loginThread(void *vargp)
         
         Read(connfd, buf, sizeof(buf));
 
-        if(strncmp(buf, "I AM ", 5) == 0 &&
+        if(strncmp(buf, "I AM", 4) == 0 &&
             strstr(buf, protocol_end) != NULL) {
 
             fprintf(stderr, "\x1B[1;34m%s received.\n", buf);
@@ -255,9 +255,13 @@ void *loginThread(void *vargp)
 
     fprintf(stderr, "\x1B[1;34mUser %s saved to list.\n", username);
     //send MOTD
-    Write(connfd, "MOTD ", 5);
-    Write(connfd, MOTD, strlen(MOTD));
-    Write(connfd, protocol_end, plen);
+
+
+    memset(buf, 0, sizeof(buf));
+    strncpy(buf, "MOTD ", 5);
+    strncpy(&buf[5], MOTD, strlen(MOTD));
+    strncpy(&buf[5 + strlen(MOTD)], protocol_end, plen);
+    Write(connfd, buf, strlen(buf));
 
     fprintf(stderr, "\x1B[1;34mHead's username %s\n", users_head->username);
     //prompt for password
@@ -311,6 +315,8 @@ void *commThread(void* vargp){
                 //perform read
 
                 char input[MAXLINE], output[MAXLINE];
+                memset(input, 0, MAXLINE);
+                memset(output, 0, MAXLINE);
 
                 fprintf(stderr, "\x1B[1;34mReading from connfd %d.\n", i);
 
@@ -323,7 +329,7 @@ void *commThread(void* vargp){
                     Remove(ptr);
                     FD_CLR(i, &read_set);
                 }else if (strncmp(input, "TIME", 4) == 0 &&
-                        strncmp(&input[6], protocol_end, plen)) {
+                        strncmp(&input[4], protocol_end, plen) == 0) {
 
                     fprintf(stderr, "\x1B[1;34mTime called by %s.\n", ptr->username);
                     time_t time_elapsed = time(NULL);
@@ -334,7 +340,35 @@ void *commThread(void* vargp){
                     strncpy(&output[strlen(output)], protocol_end, plen);
                     Write(i, output, MAXLINE);
 
-                }
+                }else if (strncmp(input, "LISTU", 5) == 0 &&
+                        strncmp(&input[5], protocol_end, plen) == 0) {
+
+                    int offset = 0;
+                    fprintf(stderr, "\x1B[1;34mLISTU called by %s.\n", ptr->username);
+
+                    strncpy(output, "UTSIL ",6);
+                    offset = 6;
+                    for(struct user *ptr = users_head; ptr != NULL; ptr = ptr->next) {
+                        fprintf(stderr, "Offset: %d\n", offset);
+                        strncpy(&output[offset], ptr->username, strlen(ptr->username));
+                        offset += strlen(ptr->username);
+                        if(ptr->next != NULL){
+                            strncpy(&output[offset], " \r\n ", 4);
+                            offset += 4;
+                        }
+                    }
+
+
+                    strncpy(&output[offset], protocol_end, plen);
+                    offset += plen;
+
+                    fprintf(stderr, "Offset: %d\n", offset);
+
+                    Write(STDOUT_FILENO, output, MAXLINE);
+                    //Add handling for output above MAXLINE chars
+                    Write(i, output, MAXLINE);
+
+                } 
             }
         } 
 

@@ -2,7 +2,6 @@
 
 void command();
 
-char buf[MAXLINE];
 char *protocol_end = " \r\n\r\n";
 int plen = 5;
 size_t buf_used;
@@ -36,6 +35,8 @@ int main(int argc, char **argv)
     char *username, *host;
     int port;
     char opt;
+
+    char buf[MAXLINE];
     fd_set read_set, ready_set;
     //plen = strlen(protocol_end);
 
@@ -165,7 +166,7 @@ int main(int argc, char **argv)
 }
 
 void command() {
-    char cmd[MAXLINE];
+    char cmd[MAXLINE], input[MAXLINE], output[MAXLINE];
     if (!Fgets(cmd, MAXLINE, stdin))
         exit(0); /* EOF */
 
@@ -179,17 +180,19 @@ void command() {
 
         fprintf(stderr, "\x1B[1;34mClient command: /time entered\n");
 
-        memset(buf, 0, sizeof(buf));
-        strncpy(buf, "TIME", 4);
-        strncpy(&buf[4], protocol_end, plen);
-        Write(clientfd, buf, strlen(buf));
+        memset(output, 0, sizeof(output));
+        strncpy(output, "TIME", 4);
+        strncpy(&output[4], protocol_end, plen);
+        Write(clientfd, output, sizeof(output));
 
-        Read(clientfd, buf, sizeof(buf));
 
-        if(strncmp("EMIT", buf, 4) == 0 &&
-            strstr(buf, protocol_end) != 0){
+        memset(input, 0, sizeof(input));
+        Read(clientfd, input, sizeof(input));
 
-            time_elapsed = atoi(&buf[5]);
+        if(strncmp("EMIT", input, 4) == 0 &&
+            strstr(input, protocol_end) != 0){
+
+            time_elapsed = atoi(&input[5]);
             hours = (int)time_elapsed / 3600;
             time_elapsed = time_elapsed % 3600;
             minutes = (int)time_elapsed / 60;
@@ -197,7 +200,7 @@ void command() {
             fprintf(stdout, "connected for %d hours %d minutes %d seconds\n", hours, minutes, seconds);
 
         }else{
-            fprintf(stderr, "Expected: BYE, invalid response from server: %s\n", buf);
+            fprintf(stderr, "Expected: TIME, invalid response from server: %s\n", input);
         }
 
     } 
@@ -212,8 +215,37 @@ void command() {
     }
     else if (strncmp(cmd, "/listu", 6) == 0) {
         // dump lists of currently logged users
-
+        
         fprintf(stderr, "\x1B[1;34mClient command: /listu entered\n");
+        memset(output, 0, sizeof(output));
+        strncpy(output, "LISTU", 5);
+        strncpy(&output[5], protocol_end, plen);
+        Write(clientfd, output, sizeof(output));
+
+        memset(input, 0, sizeof(input));
+        Read(clientfd, input, sizeof(input));
+
+        if(strncmp("UTSIL", input, 5) == 0 &&
+            strstr(&input[5], protocol_end) != NULL){
+
+            int offset = 6;
+
+            fprintf(stdout, "-----Logged In Users-----\n");
+            while(strstr(&input[offset], protocol_end) != NULL) {
+
+                fprintf(stderr, "Offset: %d", offset);
+                //parse the users
+                Write(STDOUT_FILENO, &input[offset], (int)(strstr(&input[offset], " \r\n") - &input[offset]));
+                offset += (int)(strstr(&input[offset], " \r\n") - &input[offset]) + 4;
+                Write(STDOUT_FILENO, "\n", 1);
+            }
+
+        }else{
+            fprintf(stderr, "Expected: UTSIL, invalid response from server: %s\n", input);
+        }
+
+
+
     }
     else if (strncmp(cmd, "/logout", 8) == 0) {
         // disconnect with server
