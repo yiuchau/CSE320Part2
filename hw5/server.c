@@ -381,6 +381,30 @@ void *commThread(void* vargp){
                     strncpy(&output[3], protocol_end, plen);
                     Write(i, output, sizeof(output));
                     Remove(ptr);
+                }else if (strncmp(input, "MSG", 3) == 0 &&
+                        strstr(&input[3], protocol_end) != NULL) {
+                    int tofd = -1, fromfd = -1, toUserLength, fromUserLength;
+                    char* toUser, *fromUser;
+                    toUser = &input[4];
+                    toUserLength = (int)(strstr(toUser, " ") - toUser);
+                    fromUser = &input[4 + toUserLength + 1];
+                    fromUserLength = (int)(strstr(fromUser, " ") - fromUser);
+                    for(struct user * ptr = users_head; ptr != NULL; ptr = ptr->next){
+                        if(strncmp(ptr->username, fromUser, fromUserLength) == 0)
+                            fromfd = ptr->connfd;
+                        else if(strncmp(ptr->username, toUser, toUserLength) == 0)
+                            tofd = ptr->connfd;
+                    }
+                    if(tofd == -1 || fromfd == -1){
+                        char buf[] = "ERR 01 USER NOT AVAILABLE \r\n\r\n";
+                        fprintf(stderr, "Invalid user for msg.\n");
+                        Write(i, buf, sizeof(buf));
+                        return NULL;
+                    }else{
+                        Write(tofd, input, sizeof(input));
+                        Write(fromfd, input, sizeof(input));
+                    }
+
                 }
             }
         } 

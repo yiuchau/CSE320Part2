@@ -1,4 +1,6 @@
+#define _GNU_SOURCE
 #include "csapp.h"
+#include <unistd.h>
 
 void command();
 
@@ -7,13 +9,50 @@ void serverCommand();
 char *protocol_end = " \r\n\r\n";
 int plen = 5;
 size_t buf_used;
+char* username;
+char **envp;
 
 int clientfd;
 
 int vflag = 0, cflag = 0;
 
-void read_socket(int fd) {
+
+
+struct chat {
+    char * chatname;
+    pid_t pid;
+    int chatfd;
+    struct chat *next;
+}*chat_head;
+
+
+struct chat* Remove(struct chat *ptr){
+    struct chat *tptr;
+
+    for(tptr = chat_head; tptr != NULL; tptr = tptr->next) {
+        if(tptr->next == ptr){
+            tptr->next = ptr->next;
+        }
+    }
+
+    if(ptr == chat_head){
+        chat_head = chat_head->next;
+    }
+
+    tptr = ptr->next;
+
+    fprintf(stderr, "Deleting chat for: %s\n", ptr->chatname);
+    Free(ptr->chatname);
+    Close(ptr->chatfd);
+    Free(ptr);
+
+    return tptr;
 }
+
+
+
+
+int chatFork(char* fromUser, int fromUserLength);
 
 
 #define Usage printf("./client [-hcv] NAME SERVER_IP SERVER_PORT\n \
@@ -34,7 +73,7 @@ void sigintHandler(int sig){
 int main(int argc, char **argv) 
 {
     //int clientfd;
-    char *username, *host;
+    char *host;
     int port;
     char opt;
 
@@ -42,6 +81,8 @@ int main(int argc, char **argv)
     fd_set read_set, ready_set;
     //plen = strlen(protocol_end);
 
+
+    envp = environ;
 
     if (argc < 4) {
         Usage;
@@ -148,20 +189,98 @@ int main(int argc, char **argv)
     FD_SET(STDIN_FILENO, &read_set); /* Add stdin to read set */ 
     FD_SET(clientfd, &read_set);     /* Add listenfd to read set */ 
 
+
+        /*init read_set with conn fds*/
+    for(struct chat *ptr = chat_head; ptr != NULL; ptr = ptr->next) {
+        FD_SET(ptr->chatfd, &read_set);
+        //fprintf(stderr, "Adding user %s to comm thread.\n", ptr->username);    
+    }
+
     while (1) {
+
+
+        FD_ZERO(&read_set);              /* Clear read set */ 
+        FD_SET(STDIN_FILENO, &read_set); /* Add stdin to read set */ 
+        FD_SET(clientfd, &read_set);     /* Add listenfd to read set */ 
+
+
+        /*init read_set with conn fds*/
+        for(struct chat *ptr = chat_head; ptr != NULL; ptr = ptr->next) {
+            FD_SET(ptr->chatfd, &read_set);
+            //fprintf(stderr, "Adding user %s to comm thread.\n", ptr->username);    
+        }
+
+
         ready_set = read_set;
-        Select(clientfd+1, &ready_set, NULL, NULL, NULL); 
+        Select(FD_SETSIZE, &ready_set, NULL, NULL, NULL);
+        for(int i = 0; i < FD_SETSIZE; i++) {
+            if(FD_ISSET(i, &ready_set)) {
+                if(i == STDIN_FILENO)
+                    command();
+                else if(i == clientfd) 
+                    serverCommand();
+                else {
+                    //Read from chat, put into protocol and send
+                    char input[MAXLINE], output[MAXLINE];
+                    memset(input, 0 , MAXLINE);
+                    memset(output, 0, MAXLINE);
+                    struct chat *ptr;
+                    for(ptr = chat_head; ptr != NULL; ptr = ptr->next) {
+                        if(ptr->chatfd == i)
+                            break;
+                    }
+                    fprintf(stderr, "\x1B[1;34mReading from chatfd %d.\n", i);
+
+                    if(fcntl(i, F_GETFD) == -1) {
+                        fprintf(stderr, "\x1B[1;34m%d chatfd invalid.\n", i);
+                        if(ptr != NULL)
+                            Remove(ptr);
+                        FD_CLR(i, &read_set);
+                    }else if(Read(i, input, MAXLINE) <= 0){
+                        fprintf(stderr, "\x1B[1;34mChat at chatfd %d disconnected.\n", i);
+                        if(ptr != NULL)
+                            Remove(ptr);
+                        FD_CLR(i, &read_set);
+                    }else {
+                        fprintf(stderr, "Received msg %s from chat with %s\n", input, ptr->chatname);
+                        int offset, toLength, msgLength;
+                        memset(output, 0, sizeof(output));
+                        strncpy(output, "MSG ", 4);
+                        offset = 4;
+                        toLength = strlen(ptr->chatname);
+                        strncpy(&output[offset], ptr->chatname, toLength);
+                        offset += toLength;//1 for space
+                        output[offset] = ' ';
+                        offset++;
+                        strncpy(&output[offset], username, strlen(username));
+                        offset += strlen(username);
+                        output[offset] = ' ';
+                        offset++;
+                        msgLength = strlen(input);//subtract space indexss
+                        strncpy(&output[offset], input, msgLength);
+                        offset += msgLength;
+                        strncpy(&output[offset], protocol_end, plen);
+                        Write(clientfd, output, sizeof(output));
+                        fprintf(stderr, "toLength:%d , msgLength:%d\n", toLength, msgLength);
+                    }
+
+                }
+
+            }
+        }
+
+        /*
         if (FD_ISSET(STDIN_FILENO, &ready_set)) {
             //fprintf(stderr, "\x1B[1;34mReading command line from stdin.\n");
             //fflush(stderr);
-            command(); /* Read command line from stdin */
-        }
-        if (FD_ISSET(clientfd, &ready_set)) { 
-            /* Read from clientfd */
+            command(); 
+        }else if (FD_ISSET(clientfd, &ready_set)) { 
             fprintf(stderr, "\x1B[1;34mReading command line from clientfd.\n");
             //fflush(stderr);
             serverCommand();
         }
+        */
+        
     }
 
     Close(clientfd);
@@ -217,6 +336,7 @@ void command() {
         fprintf(stdout, "/help: Print all client commands\n\
                          /time: Get time elapsed for connection\n\
                          /listu: Print all currently logged users\n\
+                         /chat: message another user\n\
                          /logout: Disconnect with server.\n");
     }
     else if (strncmp(cmd, "/listu", 6) == 0) {
@@ -259,12 +379,20 @@ void command() {
     else if (strncmp(cmd, "/logout", 7) == 0) {
         // disconnect with server
 
+        struct chat* ptr = chat_head;
         fprintf(stderr, "\x1B[1;34mClient command: /logout entered\n");
 
         memset(output, 0, sizeof(output));
         strncpy(output, "BYE", 3);
         strncpy(&output[3], protocol_end, plen);
         Write(clientfd, output, sizeof(output));
+
+        while(ptr != NULL) {
+        fprintf(stderr, "Deleting chat: %s\n", ptr->chatname);
+        //send bye to all clients
+        kill(SIGINT, ptr->pid);
+        ptr = Remove(ptr);
+    }
 
         /*
         memset(input, 0, sizeof(input));
@@ -273,6 +401,28 @@ void command() {
         Close(clientfd);
         exit(0);
         */
+    }
+    else if(strncmp(cmd, "/chat", 5) == 0) {
+        int offset, toLength, msgLength;
+        fprintf(stderr, "\x1B[1;34mClient command: /chat entered\n");   
+        memset(output, 0, sizeof(output));
+        strncpy(output, "MSG ", 4);
+        offset = 4;
+        toLength = (int)(strstr(&cmd[6], " ") - &cmd[6]);
+        strncpy(&output[offset], &cmd[6], toLength);
+        offset += toLength;//1 for space
+        output[offset] = ' ';
+        offset++;
+        strncpy(&output[offset], username, strlen(username));
+        offset += strlen(username);
+        output[offset] = ' ';
+        offset++;
+        msgLength = strlen(&cmd[6 + toLength + 1]) - 1;//subtract space indexss
+        strncpy(&output[offset], &cmd[6 + toLength + 1], msgLength);
+        offset += msgLength;
+        strncpy(&output[offset], protocol_end, plen);
+        Write(clientfd, output, sizeof(output));
+        fprintf(stderr, "toLength:%d , msgLength:%d\n", toLength, msgLength);
     }
     return;
 }
@@ -332,7 +482,96 @@ void serverCommand() {
         close(clientfd);
         fprintf(stdout, "Disconnected from server.\n");
         exit(EXIT_SUCCESS);
+    }else if(strncmp("ERR", input, 3) == 0 &&
+        strstr(&input[3], protocol_end) != NULL){
+        fprintf(stdout, "%s\n", input);
     }
+    else if(strncmp("MSG", input, 3) == 0 && 
+        strstr(&input[3], protocol_end) != NULL) {
+        
+        int toUserLength, fromUserLength, messageLength;
+        char* toUser, *fromUser, *message;
+        toUser = &input[4];
+        toUserLength = (int)(strstr(toUser, " ") - toUser);
+        fromUser = &input[4 + toUserLength + 1];
+        fromUserLength = (int)(strstr(fromUser, " ") - fromUser);
+        message = fromUser + fromUserLength + 1;
+        messageLength = (int)(strstr(message, protocol_end) - message);
+
+        fprintf(stdout, "MSG from server: \n%s\n", input);
+        fprintf(stderr, "From Length: %d , To Length: %d\n", fromUserLength, toUserLength);
+                   
+
+        //check if window is open for from user, 
+        //if doesn't exist
+        if(strncmp(username, fromUser, fromUserLength) == 0){
+            for(struct chat *ptr = chat_head; ptr != NULL ; ptr = ptr->next) {
+                if(strncmp(ptr->chatname, toUser, toUserLength) == 0) {
+                    //user chat exists
+                    fprintf(stderr, "Chat with user %s exists\n", toUser);
+                    Write(ptr->chatfd, message, messageLength);
+                    return;
+                }
+            }
+            //user doesn't exist
+
+            fprintf(stderr, "Creating chat with user %s\n", toUser);
+            Write(chatFork(toUser, toUserLength), message, messageLength);
+        }
+        else{
+            for(struct chat *ptr = chat_head; ptr != NULL ; ptr = ptr->next) {
+                if(strncmp(ptr->chatname, fromUser, fromUserLength) == 0) {
+                    //user chat exists
+
+                    fprintf(stderr, "Chat with user %s exists\n", fromUser);
+                    Write(ptr->chatfd, message, messageLength);
+                    return;
+                }
+            }
+            //user doesn't exist
+
+            fprintf(stderr, "Creating chat with user %s\n", fromUser);
+            Write(chatFork(fromUser, fromUserLength), message, messageLength);
+        }
+
+    }   
+}
+
+int chatFork(char* fromUser, int fromUserLength){
+    char *chatname = Malloc(sizeof(char) * fromUserLength + 1);
+    strncpy(chatname, fromUser, fromUserLength);
+    chatname[fromUserLength] = '\0';
+    int fd[2];
+    pid_t pid;
+
+    socketpair(AF_UNIX, SOCK_STREAM, 0, fd);
+
+    pid = fork();
+    if(pid == 0) {
+        char buffer[10];
+
+        char*argv[] = {"/usr/bin/xterm","-geometry","45x35+25","-T", chatname,"-e","./chat", buffer ,NULL};
+        snprintf(buffer, 10, "%d", fd[1]);        
+        Close(fd[0]);
+        execvpe(argv[0], argv, envp);
+
+    }else{
+        struct chat *newChat = Malloc(sizeof(struct chat));
+        newChat->chatname = chatname;
+        newChat->chatfd = fd[0];
+        newChat->pid = pid;
+
+        if(chat_head == NULL){
+            chat_head = newChat;
+            newChat->next = NULL;
+        }else{
+            newChat->next = chat_head;
+            chat_head = newChat;
+        }
+    }
+    
+    Close(fd[1]);
+    return fd[0];
 }
 
 
